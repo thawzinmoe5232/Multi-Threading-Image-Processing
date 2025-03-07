@@ -1,9 +1,9 @@
+#include <opencv2/opencv.hpp>
 #include <iostream>
 
 using namespace std;
 
 int main() {
-
-    cout << "Start of greatness?" << endl;
+    std::cout << "Hello" << endl;
     return 0;
 }
