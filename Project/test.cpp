@@ -1,5 +1,7 @@
 #include <opencv2/opencv.hpp>
 #include <iostream>
+#include <thread>
+#include <vector>
 
 // Function to load an image from a file path
 cv::Mat loadImage(const std::string& filepath) {
@@ -40,15 +42,61 @@ void displayImage(const std::string& windowName, const cv::Mat& img) {
     cv::waitKey(0);  // Wait for a key press
 }
 
-// Function to check if images are equal, considering potential size differences due to filtering
-bool areImagesEqual(const cv::Mat& img1, const cv::Mat& img2) {
-    // Check if images are the same size
-    if (img1.size() != img2.size()) {
-        return false; // If sizes are different, they are not equal
+// Function to split the image into horizontal sections (Mode 1)
+void splitImageHorizontally(const cv::Mat& img, std::vector<cv::Rect>& regions, int numThreads) {
+    int rows = img.rows;
+    int cols = img.cols;
+
+    // Calculate the height of each region
+    int stepY = rows / numThreads;
+
+    for (int i = 0; i < numThreads; ++i) {
+        int y = i * stepY;
+        int height = (i == numThreads - 1) ? rows - y : stepY;
+        regions.push_back(cv::Rect(0, y, cols, height));
+    }
+}
+
+// Recursive function to split the image into 4^n sections (Mode 2)
+void splitImage4N(const cv::Mat& img, std::vector<cv::Rect>& regions, int level, const cv::Rect& region) {
+    if (level == 0) {
+        regions.push_back(region);
+        return;
     }
 
-    // Compare pixel-by-pixel, ignoring size differences
-    return cv::countNonZero(img1 != img2) == 0;
+    // Calculate new region size
+    int halfWidth = region.width / 2;
+    int halfHeight = region.height / 2;
+
+    // Recursively split into 4 sections
+    splitImage4N(img, regions, level - 1, cv::Rect(region.x, region.y, halfWidth, halfHeight));
+    splitImage4N(img, regions, level - 1, cv::Rect(region.x + halfWidth, region.y, halfWidth, halfHeight));
+    splitImage4N(img, regions, level - 1, cv::Rect(region.x, region.y + halfHeight, halfWidth, halfHeight));
+    splitImage4N(img, regions, level - 1, cv::Rect(region.x + halfWidth, region.y + halfHeight, halfWidth, halfHeight));
+}
+
+// Function to apply the filter to a region
+void filterRegion(const cv::Mat& img, cv::Mat& output_img, const cv::Rect& region, int choice, int kernelSize, double sigmaX) {
+    cv::Mat regionImg = img(region);  // Extract the region of the image
+
+    cv::Mat filteredRegion;
+    switch (choice) {
+        case 1:
+            filteredRegion = applyMedianFilter(regionImg, kernelSize);
+            break;
+        case 2:
+            filteredRegion = applyLaplacianFilter(regionImg, kernelSize);
+            break;
+        case 3:
+            filteredRegion = applyGaussianFilter(regionImg, cv::Size(kernelSize, kernelSize), sigmaX);
+            break;
+        default:
+            std::cerr << "Invalid filter choice!" << std::endl;
+            return;
+    }
+
+    // Copy the filtered region back to the output image
+    filteredRegion.copyTo(output_img(region));
 }
 
 int main() {
@@ -57,6 +105,14 @@ int main() {
 
     // Display the original image
     displayImage("Original Image", img);
+
+    // Ask user which mode they want to use
+    int mode;
+    std::cout << "Select the mode to use:" << std::endl;
+    std::cout << "1. OpenCV Original Multithreading (Mode 1)" << std::endl;
+    std::cout << "2. Unique 4^n Splitting (Mode 2)" << std::endl;
+    std::cout << "Enter your choice (1/2): ";
+    std::cin >> mode;
 
     // Ask user which filter they want to apply
     int choice;
@@ -67,58 +123,58 @@ int main() {
     std::cout << "Enter your choice (1/2/3): ";
     std::cin >> choice;
 
-    int kernelSize, recursionLevel;
-    cv::Mat filtered_img;
-
-    // Ask for kernel size and recursion level
+    int kernelSize;
+    double sigmaX = 0;
     std::cout << "Enter kernel size (odd number): ";
     std::cin >> kernelSize;
-    std::cout << "Enter recursion level (0 for no recursion): ";
-    std::cin >> recursionLevel;
 
-    // Ask for sigmaX for Gaussian filter
-    double sigmaX = 0;
     if (choice == 3) {
         std::cout << "Enter sigmaX for Gaussian filter: ";
         std::cin >> sigmaX;
     }
 
-    // Apply the selected filter based on user input
-    switch (choice) {
-        case 1:
-            // Apply Median Filter
-            filtered_img = applyMedianFilter(img, kernelSize);
-            break;
-
-        case 2:
-            // Apply Laplacian Filter
-            filtered_img = applyLaplacianFilter(img, kernelSize);
-            break;
-
-        case 3:
-            // Apply Gaussian Filter
-            filtered_img = applyGaussianFilter(img, cv::Size(kernelSize, kernelSize), sigmaX);
-            break;
-
-        default:
-            std::cerr << "Invalid choice! Exiting program..." << std::endl;
-            return -1;
+    // Ask user how many sections (threads) they want to divide the image into (for Mode 1)
+    int numThreads = 0;
+    if (mode == 1) {
+        std::cout << "Enter the number of horizontal sections (threads): ";
+        std::cin >> numThreads;
     }
+
+    // Prepare the output image
+    cv::Mat output_img = img.clone();
+
+    // Set OpenCV to use only 1 thread (disabling internal parallelism for Mode 1)
+    if (mode == 1) {
+        cv::setNumThreads(1);
+    }
+
+    // Handle splitting for Mode 1 (OpenCV multithreading method)
+    std::vector<cv::Rect> regions;
+    if (mode == 1) {
+        splitImageHorizontally(img, regions, numThreads);
+    }
+
+    // Handle splitting for Mode 2 (4^n unique method)
+    if (mode == 2) {
+        int recursionLevel;
+        std::cout << "Enter the recursion level (for 4^n splitting): ";
+        std::cin >> recursionLevel;
+        splitImage4N(img, regions, recursionLevel, cv::Rect(0, 0, img.cols, img.rows));
+    }
+
+    // Prepare for multithreading
+    std::vector<std::thread> threads;
+
+    // Create threads to process each region
+    for (const auto& region : regions) {
+        threads.emplace_back(filterRegion, std::ref(img), std::ref(output_img), region, choice, kernelSize, sigmaX);
+    }
+
+    // Wait for all threads to finish
+    for (auto& t : threads) t.join();
 
     // Display the filtered image
-    displayImage("Filtered Image", filtered_img);
+    displayImage("Filtered Image", output_img);
 
-
-
-    // The areImagesEqual function is broken
-
-    
-    // Check if the images are the same
-    /*if (areImagesEqual(img, filtered_img)) {
-        std::cout << "The input image is the same as the final image." << std::endl;
-    } else {
-        std::cout << "The input image is different from the final image." << std::endl;
-    }
-    */
     return 0;
 }
