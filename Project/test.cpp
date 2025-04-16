@@ -1,4 +1,5 @@
 #include <opencv2/opencv.hpp>
+#include <fstream>
 #include <iostream>
 #include <thread>
 #include <vector>
@@ -11,6 +12,32 @@ cv::Mat loadImage(const std::string& filepath) {
         exit(-1);
     }
     return img;
+}
+
+// Function to load a kernel from a file path
+std::tuple<int, cv::Mat> loadKernel(const std::string& filepath) {
+    std::ifstream File(filepath);
+    if (!File.is_open()) {
+        std::cerr << "Error: Could not load kernel. Check the file path!" << std::endl;
+        exit(-1);
+    }
+
+    int kernelSize;
+    File >> kernelSize;
+
+    cv::Mat kernel(kernelSize, kernelSize, CV_32F);
+    for (int i = 0; i < kernelSize; i++) {
+        for (int j = 0; j < kernelSize; j++) {
+            float value;
+            if (!(File >> value)) {
+                std::cerr << "Error: kernel file is not formatted properly!" << std::endl;
+                exit(-1);
+            };
+            kernel.at<float>(i, j) = value;
+        }
+    }
+    File.close();
+    return {kernelSize, kernel};
 }
 
 // Function to apply the median filter to an image
@@ -31,6 +58,13 @@ cv::Mat applyLaplacianFilter(const cv::Mat& img, int kernelSize) {
 cv::Mat applyGaussianFilter(const cv::Mat& img, const cv::Size& kernelSize, double sigmaX) {
     cv::Mat filtered_img;
     cv::GaussianBlur(img, filtered_img, kernelSize, sigmaX);  // Apply Gaussian filter
+    return filtered_img;
+}
+
+// Function to apply the custom filter to an image
+cv::Mat applyCustomFilter(const cv::Mat& img, const cv::Mat& kernel) {
+    cv::Mat filtered_img;
+    cv::filter2D(img, filtered_img, -1, kernel); // Apply custom filter
     return filtered_img;
 }
 
@@ -76,7 +110,7 @@ void splitImage4N(const cv::Mat& img, std::vector<cv::Rect>& regions, int level,
 }
 
 // Function to apply the filter to a region
-void filterRegion(const cv::Mat& img, cv::Mat& output_img, const cv::Rect& region, int choice, int kernelSize, double sigmaX) {
+void filterRegion(const cv::Mat& img, cv::Mat& output_img, const cv::Rect& region, int choice, int kernelSize, cv::Mat& kernel, double sigmaX) {
     cv::Mat regionImg = img(region);  // Extract the region of the image
 
     cv::Mat filteredRegion;
@@ -89,6 +123,9 @@ void filterRegion(const cv::Mat& img, cv::Mat& output_img, const cv::Rect& regio
             break;
         case 3:
             filteredRegion = applyGaussianFilter(regionImg, cv::Size(kernelSize, kernelSize), sigmaX);
+            break;
+        case 4:
+            filteredRegion = applyCustomFilter(regionImg, kernel);
             break;
         default:
             std::cerr << "Invalid filter choice!" << std::endl;
@@ -120,13 +157,21 @@ int main() {
     std::cout << "1. Median Filter" << std::endl;
     std::cout << "2. Laplacian Filter" << std::endl;
     std::cout << "3. Gaussian Filter" << std::endl;
-    std::cout << "Enter your choice (1/2/3): ";
+    std::cout << "4. Custom Filter" << std::endl;
+    std::cout << "Enter your choice (1/2/3/4): ";
     std::cin >> choice;
 
     int kernelSize;
+    cv::Mat kernel;
     double sigmaX = 0;
-    std::cout << "Enter kernel size (odd number): ";
-    std::cin >> kernelSize;
+
+    if (choice == 4) {
+        std::tie(kernelSize, kernel) = loadKernel("kernel.txt");
+    }
+    else {
+        std::cout << "Enter kernel size (odd number): ";
+        std::cin >> kernelSize;
+    }
 
     if (choice == 3) {
         std::cout << "Enter sigmaX for Gaussian filter: ";
@@ -167,7 +212,7 @@ int main() {
 
     // Create threads to process each region
     for (const auto& region : regions) {
-        threads.emplace_back(filterRegion, std::ref(img), std::ref(output_img), region, choice, kernelSize, sigmaX);
+        threads.emplace_back(filterRegion, std::ref(img), std::ref(output_img), region, choice, kernelSize, kernel, sigmaX);
     }
 
     // Wait for all threads to finish
