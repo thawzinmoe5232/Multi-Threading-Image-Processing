@@ -4,7 +4,7 @@ Both will needed to be installed and System environments will be needed to be ch
 
 The project folder will have both the source code, executable, and the environment that was used to compile the code. 
 This is the command that was used to compile:
-cl test.cpp /EHsc /I C:/dev/opencv/build/include /link /LIBPATH:C:/dev/opencv/build/x64/vc16/lib opencv_world4110.lib
+cl /std:c++17 test.cpp /EHsc /I C:/dev/opencv/build/include /link /LIBPATH:C:/dev/opencv/build/x64/vc16/lib opencv_world4110.lib
 
 This command was used to run the executable:
 .\text.exe

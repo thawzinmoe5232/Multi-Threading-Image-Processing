@@ -24,6 +24,10 @@ std::tuple<int, cv::Mat> loadKernel(const std::string& filepath) {
 
     int kernelSize;
     File >> kernelSize;
+    if (kernelSize % 2 == 0) {
+        std::cerr << "Error: kernel size must be odd!" << std::endl;
+        exit(-1);
+    }
 
     cv::Mat kernel(kernelSize, kernelSize, CV_32F);
     for (int i = 0; i < kernelSize; i++) {
@@ -212,7 +216,7 @@ int main() {
 
     // Create threads to process each region
     for (const auto& region : regions) {
-        threads.emplace_back(filterRegion, std::ref(img), std::ref(output_img), region, choice, kernelSize, kernel, sigmaX);
+        threads.emplace_back(filterRegion, std::ref(img), std::ref(output_img), region, choice, kernelSize, std::ref(kernel), sigmaX);
     }
 
     // Wait for all threads to finish

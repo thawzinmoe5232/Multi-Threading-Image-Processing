@@ -10,6 +10,36 @@
 
 namespace fs = std::filesystem;
 
+// Function to load a kernel from a file path
+std::tuple<int, cv::Mat> loadKernel(const std::string& filepath) {
+    std::ifstream File(filepath);
+    if (!File.is_open()) {
+        std::cerr << "Error: Could not load kernel. Check the file path!" << std::endl;
+        exit(-1);
+    }
+
+    int kernelSize;
+    File >> kernelSize;
+    if (kernelSize % 2 == 0) {
+        std::cerr << "Error: kernel size must be odd!" << std::endl;
+        exit(-1);
+    }
+
+    cv::Mat kernel(kernelSize, kernelSize, CV_32F);
+    for (int i = 0; i < kernelSize; i++) {
+        for (int j = 0; j < kernelSize; j++) {
+            float value;
+            if (!(File >> value)) {
+                std::cerr << "Error: kernel file is not formatted properly!" << std::endl;
+                exit(-1);
+            };
+            kernel.at<float>(i, j) = value;
+        }
+    }
+    File.close();
+    return {kernelSize, kernel};
+}
+
 // Filter functions
 cv::Mat applyMedianFilter(const cv::Mat& img, int kernelSize) {
     cv::Mat filtered_img;
@@ -26,6 +56,12 @@ cv::Mat applyLaplacianFilter(const cv::Mat& img, int kernelSize) {
 cv::Mat applyGaussianFilter(const cv::Mat& img, const cv::Size& kernelSize, double sigmaX) {
     cv::Mat filtered_img;
     cv::GaussianBlur(img, filtered_img, kernelSize, sigmaX);
+    return filtered_img;
+}
+
+cv::Mat applyCustomFilter(const cv::Mat& img, const cv::Mat& kernel) {
+    cv::Mat filtered_img;
+    cv::filter2D(img, filtered_img, -1, kernel); // Apply custom filter
     return filtered_img;
 }
 
@@ -53,7 +89,7 @@ void splitImage4N(const cv::Mat& img, std::vector<cv::Rect>& regions, int level,
 }
 
 // Filtering function for a region
-void filterRegion(const cv::Mat& img, cv::Mat& output_img, const cv::Rect& region, int choice, int kernelSize, double sigmaX) {
+void filterRegion(const cv::Mat& img, cv::Mat& output_img, const cv::Rect& region, int choice, int kernelSize, cv::Mat& kernel, double sigmaX) {
     cv::Mat regionImg = img(region);
     cv::Mat filteredRegion;
     switch (choice) {
@@ -65,6 +101,9 @@ void filterRegion(const cv::Mat& img, cv::Mat& output_img, const cv::Rect& regio
             break;
         case 3:
             filteredRegion = applyGaussianFilter(regionImg, cv::Size(kernelSize, kernelSize), sigmaX);
+            break;
+        case 4:
+            filteredRegion = applyCustomFilter(regionImg, kernel);
             break;
         default:
             std::cerr << "Invalid filter choice!" << std::endl;
@@ -103,13 +142,16 @@ double calculateCPUUsage() {
 
 int main() {
     // ===== Configuration =====
-    std::string folder = "hard"; // Set to "easy" or "hard"
-    int mode = 1;                // 1 for OpenCV horizontal split, 2 for unique 4^n splitting
-    int filterChoice = 3;        // 1 = Median, 2 = Laplacian, 3 = Gaussian
-    int kernelSize = 11;
+    std::string folder = "easy"; // Set to "easy" or "hard"
+    int mode = 2;                // 1 for OpenCV horizontal split, 2 for unique 4^n splitting
+    int filterChoice = 4;        // 1 = Median, 2 = Laplacian, 3 = Gaussian, 4 = Custom
+    int kernelSize = 11;         // For non-custom filters
+    cv::Mat kernel;
     double sigmaX = 5.0;         // Only used for Gaussian filter
     int numThreads = 64;          // For Mode 1 (horizontal splitting)
     int recursionLevel = 3;      // For Mode 2 (4^n splitting)
+    if (filterChoice == 4)
+        std::tie(kernelSize, kernel) = loadKernel("kernel.txt");
 
     // Set output folder and report file name based on folder and mode
     std::string outputFolder = folder + "applied";
@@ -137,6 +179,8 @@ int main() {
         report << "Laplacian Filter\n";
     else if (filterChoice == 3)
         report << "Gaussian Filter\n";
+    else if (filterChoice == 4)
+        report << "Custom Filter\n";
     report << "Kernel Size: " << kernelSize << "\n";
     if (filterChoice == 3)
         report << "SigmaX: " << sigmaX << "\n";
@@ -177,7 +221,7 @@ int main() {
 
         std::vector<std::thread> threads;
         for (const auto& region : regions) {
-            threads.emplace_back(filterRegion, std::ref(img), std::ref(output), region, filterChoice, kernelSize, sigmaX);
+            threads.emplace_back(filterRegion, std::ref(img), std::ref(output), region, filterChoice, kernelSize, std::ref(kernel), sigmaX);
         }
         for (auto& t : threads)
             t.join();
